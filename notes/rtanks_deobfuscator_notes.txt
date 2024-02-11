@@ -1,0 +1,27 @@
+name database:
+	- Name database is object where name mappings for all the rtanks classes, interfaces, variables, functions etc are stored.
+	- Deobfuscation passes will check mapping for every name when it is read from the code.
+	- The last pass will write the database names to the code.
+
+idea of passes:
+	1. Basic class, interface and package deobfuscation pass (will be executed 3 or even more times)
+		1. calculates hash using these methods:
+			- import count
+			- variable count
+			- function count
+			- function signutures
+			- package names
+
+		2. compares rtanks hashes to mytanks hashes
+		3. renames the tartgets(classes, interfaces etc.) from name database, if hashes are matching
+
+	3. Basic variable and function deobfuscation pass
+	4. Advanced variable and function deobfuscation pass
+		1. loops through every file and finds out where every variable and function is ussed/called
+		2. calculates hash using the data which we collected in step 1
+		3. compares rtanks hashes to mytanks hashes
+		4. renames the tartgets(variabes and functions) from name database, if hashes are matching
+
+	5. Code edit pass
+		1. All the changed names from name database are written to the code.
+		2. Saves the modified code	
