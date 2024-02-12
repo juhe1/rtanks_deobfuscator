@@ -5,28 +5,36 @@ from typing import Dict, List, IO
 
 import os
 import json
-import pprint
 import pyperclip # NOTE: Only used in debugging. So remove if you want.
 
 ALLOWED_FILE_TYPES:List[str] = ["as"]
 TEST_SOURCE_PATH = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\test_data"
 
+# Names are taken from the reference project. So when we are deobfuscating rtanks, this path should countain mytanks sources.
+REFERENCE_PROJECT_PATH = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\test_data"
+
+# Target project should contain sources that we are trying to deobfuscate. 
+TARGET_PROJECT_PATH = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\test_data"
+
+
 @dataclass
-class ActionScriptClassInfo:
+class ActionScriptClassData:
     name:str
     implements:List[str]
     extends:str
     visibility:str
 
+
 @dataclass
-class ActionScriptVarInfo:
+class ActionScriptVarData:
     name:str
     visibility:str
     type:str
     static:bool
 
+
 @dataclass
-class ActionScriptFunctionInfo:
+class ActionScriptFunctionData:
     name:str
     visibility:str
     static:bool
@@ -35,13 +43,14 @@ class ActionScriptFunctionInfo:
     param_types:List[str]
     line_count:int
 
+
 class ActionScriptFileParser:
     def __init__(self, file_path:str) -> None:
         self.package_name:str = ""
         self.imports:List[str] = []
-        self.class_infos:List[ActionScriptClassInfo] = []
-        self.global_var_infos:List[ActionScriptVarInfo] = []
-        self.function_infos:List[ActionScriptFunctionInfo] = []
+        self.class_infos:List[ActionScriptClassData] = []
+        self.global_var_infos:List[ActionScriptVarData] = []
+        self.function_infos:List[ActionScriptFunctionData] = []
 
         self.parse_file(file_path)
 
@@ -99,7 +108,7 @@ function_infos: {self.function_infos}
             extends_index = line_splitted_by_space.index(EXTENDS_TEXT)
             extends = line_splitted_by_space[extends_index + 1]
 
-        class_info = ActionScriptClassInfo(
+        class_info = ActionScriptClassData(
             name=line_splitted_by_space[word_index + 1],
             implements=implements,
             extends=extends,
@@ -123,7 +132,7 @@ function_infos: {self.function_infos}
         static = self.is_static(line_splitted_by_space)        
         visibility = self.parse_visibility(line_splitted_by_space)        
 
-        var_info = ActionScriptVarInfo(
+        var_info = ActionScriptVarData(
             name=name,
             type=type,
             visibility=visibility,
@@ -174,7 +183,7 @@ function_infos: {self.function_infos}
 
             function_line_count += 1
 
-        function_info = ActionScriptFunctionInfo(
+        function_info = ActionScriptFunctionData(
             name=name,
             visibility=visibility,
             static=static,
@@ -210,7 +219,51 @@ function_infos: {self.function_infos}
             for line in file:
                 self.parse_line(line, file)
 
-def parse_pass(source_path, file_data_parse_functin:Callable) -> None:
+
+class ProjectSources:
+    def __init__(self) -> None:
+        self.actionscript_file_parsers:List[ActionScriptFileParser] = []
+        self.new_name_by_old_name:Dict[str, str] = {}
+
+    def get_new_name(self, old_name:str) -> str:
+        return self.new_name_by_old_name[old_name]
+
+
+class BasicImportVarFunctionDeobfuscationPass:
+    """
+    This pass will find files whose import, variable and function signatures and counts matches.
+    """
+
+    def __init__(self, reference_project:ProjectSources, target_project:ProjectSources) -> None:
+        self.reference_project:ProjectSources = reference_project
+        self.target_project:ProjectSources = target_project
+
+        self.reference_project_action_script_files_by_import_count:Dict[int, List[ActionScriptFileParser]] = self.sort_action_script_file_parsers_by_import_count(reference_project)
+        self.target_project_action_script_files_by_import_count:Dict[int, List[ActionScriptFileParser]] = self.sort_action_script_file_parsers_by_import_count(target_project)
+
+    def sort_action_script_file_parsers_by_import_count(self, project:ProjectSources) -> Dict[int, List[ActionScriptFileParser]]:
+        out = {}
+        for action_script_file_parser in project.actionscript_file_parsers:
+            import_count = len(action_script_file_parser.imports)
+
+            if not import_count in out:
+                out[import_count] = []
+
+            out[import_count].append(action_script_file_parser)
+
+        return out
+
+    def deobfuscate(self) -> None:
+        for action_script_file_parse in self.target_project.actionscript_file_parsers:
+            import_count = len(action_script_file_parse.imports)
+            reference_script_file_parsers_with_same_import_counts = self.reference_project_action_script_files_by_import_count[import_count]
+            
+            for reference_script_file_parsers_with_same_import_count in reference_script_file_parsers_with_same_import_counts:
+                #reference_script_file_parsers_with_same_import_count.
+
+def parse_project_sources(source_path:str) -> ProjectSources:
+    sources = ProjectSources()
+
     for root, directories, files in os.walk(source_path):
         for filename in files:
             if not filename.split(".")[-1] in ALLOWED_FILE_TYPES:
@@ -218,17 +271,22 @@ def parse_pass(source_path, file_data_parse_functin:Callable) -> None:
 
             file_path = os.path.join(root, filename)
             as_file_parser = ActionScriptFileParser(file_path)
+            sources.actionscript_file_parsers.append(as_file_parser)
 
-            as_file_parser_as_dic = as_file_parser.get_as_dictionary()
+    return sources
 
-            # Copy the string to the clipboard
-            pyperclip.copy(json.dumps(as_file_parser_as_dic))
-            print("copied to clipboard!")
+def test_action_script_file_parser() -> None:
+    # Copy the string to the clipboard
+    sources = parse_project_sources(TEST_SOURCE_PATH)
+    action_script_file_datas = [x.get_as_dictionary() for x in sources.actionscript_file_parsers]
+    
+    pyperclip.copy(json.dumps(action_script_file_datas))
+    print("copied to clipboard!")
 
-            # TODO: do something with the data
+def main() -> None:
+    reference_project = parse_project_sources(REFERENCE_PROJECT_PATH)
+    target_project = parse_project_sources(TARGET_PROJECT_PATH)
 
 if __name__ == "__main__":
-    def none():
-        return
-
-    parse_pass(TEST_SOURCE_PATH, none)
+    #test_action_script_file_parser()
+    main()

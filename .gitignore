@@ -1,2 +1,4 @@
 test_data/
-run.bat
+obfuscated_test_data/
+run_deobfuscator.bat
+run_name_cleaner.bat
