@@ -1,6 +1,6 @@
 """
 This script will rename all names that are obuscated with new random name. 
-So for example "§5L§" will become "obfuscated_name_1".
+So for example "§5L§" will become "deobfuscated_name_1".
 """
 
 # TODO: deobfuscate also the path
@@ -17,6 +17,17 @@ NEW_NAME = "deobfuscated_name"
 
 new_name_by_old_name:Dict[str, str] = {} 
 current_name_id = 0
+
+def deobfuscate_name(obfuscated_name:str) -> str:
+    global current_name_id
+
+    if obfuscated_name in new_name_by_old_name:
+        return new_name_by_old_name[obfuscated_name]
+    else:
+        new_name = NEW_NAME + "_" + str(current_name_id)
+        current_name_id += 1
+        new_name_by_old_name[obfuscated_name] = new_name
+        return new_name
 
 def edit_line(line:str) -> str:
     global current_name_id
@@ -36,15 +47,7 @@ def edit_line(line:str) -> str:
             obfuscated_names[-1] += char
 
     for obfuscated_name in obfuscated_names:
-        if obfuscated_name in new_name_by_old_name:
-            new_name = new_name_by_old_name[obfuscated_name]
-        else:
-            new_name = NEW_NAME + "_" + str(current_name_id)
-            current_name_id += 1
-            new_name_by_old_name[obfuscated_name] = new_name
-
-        print(obfuscated_name)
-        print(new_name)
+        new_name = deobfuscate_name(obfuscated_name)
         line = line.replace(obfuscated_name, new_name)
 
     return line
@@ -56,9 +59,22 @@ def create_modified_file(dir_relative_path:str, file_name) -> None:
         for line in file:
             new_text += edit_line(line)
 
-    print(OUTPUT_SOURCE_PATH + dir_relative_path)
-    os.makedirs(OUTPUT_SOURCE_PATH + dir_relative_path, exist_ok=True)
-    with open(OUTPUT_SOURCE_PATH + dir_relative_path + "\\" + file_name, 'w', encoding="utf-8") as file:
+    if file_name[0] == OBFUSCATION_IDENTIFIER_CHAR:
+        obfuscated_part = "".join(file_name.split(".")[:-1])
+        file_name = file_name.replace(obfuscated_part, deobfuscate_name(obfuscated_part))
+
+    new_path = (OUTPUT_SOURCE_PATH + dir_relative_path).replace("\\", "/")
+
+    for folder_name in new_path.split("/"):
+        if not folder_name[0] == OBFUSCATION_IDENTIFIER_CHAR:
+            continue
+
+        deobfuscated_folder_name = deobfuscate_name(folder_name)
+        new_path = new_path.replace(folder_name, deobfuscated_folder_name)
+
+    os.makedirs(new_path, exist_ok=True)
+
+    with open(new_path + "\\" + file_name, 'w', encoding="utf-8") as file:
         file.write(new_text)
 
 def loop_all_files() -> None:
