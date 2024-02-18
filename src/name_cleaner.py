@@ -8,8 +8,8 @@ So for example "§5L§" will become "deobfuscated_name_1".
 from typing import Dict, List
 import os
 
-INPUT_SOURCE_PATH:str = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\obfuscated_test_data\in"
-OUTPUT_SOURCE_PATH:str = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\obfuscated_test_data\out"
+INPUT_SOURCE_PATH:str = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\data\rtanks_sources"
+OUTPUT_SOURCE_PATH:str = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\data\rtanks_sources_cleaned"
 
 OBFUSCATION_IDENTIFIER_CHAR:str = "§"
 ALLOWED_FILE_TYPES:List[str] = ["as"]
