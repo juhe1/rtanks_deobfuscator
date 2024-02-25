@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os.path import join
 from typing import Dict, List, IO
 
@@ -19,6 +19,14 @@ REFERENCE_PROJECT_PATH = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\da
 TARGET_PROJECT_PATH = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\data\rtanks_sources_cleaned"
 
 FUNCTION_LINE_COUNT_TOLERANCE = 2
+OPENING_BRACE = "()"[0] # the "()"[0] is for my stupid lsp which will freak out if i dont close open parenthesis in string
+CLOSING_BRACE = "()"[1] # the "()"[1] is for my stupid lsp which will freak out if i dont close open parenthesis in string
+
+
+@dataclass
+class Accesser:
+    class_name_and_package:str = ""
+    name:str = ""
 
 
 class Utils:
@@ -50,6 +58,8 @@ class ActionScriptVarData:
     visibility:str
     type:str
     static:bool
+    value:str;
+    accessers:List[Accesser] = field(default_factory=list)
 
 
 @dataclass
@@ -62,43 +72,106 @@ class ActionScriptFunctionData:
     param_types:List[str]
     line_count:int
     setter_getter:str
+    accessers:List[Accesser] = field(default_factory=list)
+
+
+@dataclass
+class ActionScriptAccessData:
+    """
+    example:
+        var jea:SomeClass = something;
+        jea.nigga.stole.my.bige
+
+    In above example the accessed_class_name_and_package will have "SomeClass" as value and sub_accesses will have ["nigga", "stole", "my", "bige"] as value
+    """
+
+    function_name:str
+    accessed_class_name_and_package:str
+    sub_accesses:List[str]
+
+
+@dataclass
+class ActionScriptImportDatas:
+    import_string:str
+    accessers:List[Accesser] = field(default_factory=list)
+
+
+class ProjectSources:
+    def __init__(self) -> None:
+        self.actionscript_file_parsers:List[ActionScriptFileParser] = []
+        self.actionscript_file_parsers_by_class_name_and_package:Dict[str, ActionScriptFileParser] = {} # Example: {"some.package.ExampleClass":ActionScriptFileParser()}
+        self.new_name_by_old_name:Dict[str, str] = {}
+
+    def is_name_already_deobfuscated(self, name:str) -> bool:
+        return name in self.new_name_by_old_name
+
+    def try_get_new_name(self, old_name:str) -> str:
+        """
+        Will return old_name if there is no new name.
+        """
+
+        if not old_name in self.new_name_by_old_name:
+            return old_name
+
+        return self.new_name_by_old_name[old_name]
+
+    def get_new_names_with_list_of_old_names(self, list_of_old_names:List[str]) -> List[str]:
+        """
+        Will write old name to new name list, if there is no new name.
+        """
+
+        new_names = []
+
+        for old_name in list_of_old_names:
+            new_names.append(self.try_get_new_name(old_name))
+
+        return new_names
 
 
 class ActionScriptFileParser:
     def __init__(self, file_path:str) -> None:
         self.package_name:str = ""
-        self.imports:List[str] = []
+        #self.imports:List[str] = []
+        self.import_datas:List[ActionScriptImportDatas] = []
         self.class_datas:List[ActionScriptClassData] = []
         self.interface_datas:List[ActionScriptInterfaceData] = []
         self.global_var_datas:List[ActionScriptVarData] = []
         self.function_datas:List[ActionScriptFunctionData] = []
+        self.access_datas:List[ActionScriptAccessData] = []
+        self.import_datas_by_import_string:Dict[str, ActionScriptImportDatas] = {}
+        self.global_var_datas_by_name:Dict[str, ActionScriptVarData] = {}
+        self.function_datas_by_name:Dict[str, ActionScriptFunctionData] = {}
+        #self.import_accesser_names_by_import_name:Dict[str, List[str]] = {} # Example: {"jea.something":["some_function"]}, so jea.something is accessed in some_function
 
         self.parse_file(file_path)
 
     def __str__(self) -> str:
         return f"""
 package_name: {self.package_name}
-imports: {self.imports}
-class_infos: {self.class_datas}
-global_var_infos: {self.global_var_datas}
-function_infos: {self.function_datas}
+import_datas: {self.import_datas}
+class_datas: {self.class_datas}
+global_var_datas: {self.global_var_datas}
+function_datas: {self.function_datas}
+access_datas: {self.access_datas}
         """
 
     def get_as_dictionary(self) -> Dict:
         package_name = str(self.package_name)
-        imports = [str(x) for x in self.imports]
+        import_datas = [str(x) for x in self.import_datas]
         class_infos = [str(x) for x in self.class_datas]
         interface_infos = [str(x) for x in self.interface_datas]
         global_var_infos = [str(x) for x in self.global_var_datas]
         function_infos = [str(x) for x in self.function_datas]
+        access_datas = [str(x) for x in self.access_datas]
 
         return {
             "package_name":package_name,
-            "imports":imports,
+            "import_datas":import_datas,
             "class_infos":class_infos,
             "interface_infos":interface_infos,
             "global_var_infos":global_var_infos,
-            "function_infos":function_infos
+            "function_infos":function_infos,
+            "access_datas":access_datas,
         }
 
     def parse_package(self, line_splitted_by_space:List[str], word_index:int) -> None:
@@ -106,7 +179,11 @@ function_infos: {self.function_datas}
             self.package_name = line_splitted_by_space[word_index + 1]
     
     def parse_import(self, line_splitted_by_space:List[str], word_index:int) -> None:
-        self.imports.append(line_splitted_by_space[word_index + 1][:-1])
+        import_data = ActionScriptImportDatas(
+            import_string = line_splitted_by_space[word_index + 1][:-1]
+        )
+        self.import_datas.append(import_data)
+        self.import_datas_by_import_string[import_data.import_string] = import_data
 
     def parse_class_definition(self, line_splitted_by_space:List[str], word_index:int) -> None:
         IMPLEMENTS_TEXT = "implements"
@@ -149,23 +226,142 @@ function_infos: {self.function_datas}
         return "public"
 
     def parse_var_definition(self, line_splitted_by_space:List[str], word_index:int) -> None:
-        name_and_type = line_splitted_by_space[word_index + 1][:-1].split(":")
+        name_and_type = line_splitted_by_space[word_index + 1].split(":")
         name = name_and_type[0]
         type = name_and_type[1]
+
+        if type[-1] == ";":
+            type = type[:-1]
+
         static = self.is_static(line_splitted_by_space)        
         visibility = self.parse_visibility(line_splitted_by_space)        
+        
+        value = ""
+
+        if "=" in line_splitted_by_space:
+            value = "".join(line_splitted_by_space[line_splitted_by_space.index("=") + 1:])[:-1]
 
         var_info = ActionScriptVarData(
             name=name,
             type=type,
             visibility=visibility,
-            static=static
+            static=static,
+            value=value
         )
         self.global_var_datas.append(var_info)
+        self.global_var_datas_by_name[name] = var_info
+
+        imported_classes = [x.import_string.split(".")[-1] for x in self.import_datas]
+        if type in imported_classes:
+            import_string = self.import_datas[imported_classes.index(type)].import_string
+            accesser = Accesser(
+                name = name,
+                class_name_and_package = self.package_name + "." + self.class_datas[0].name
+            )
+
+            self.import_datas_by_import_string[import_string].accessers.append(accesser)
+
+    def parse_local_var_definition(self, line_splitted_by_space:List[str], word_index:int) -> ActionScriptVarData | None:
+        t = line_splitted_by_space[word_index + 1].split(":")
+
+        if len(t) < 2:
+            return None
+
+        name, type = t
+        return ActionScriptVarData(
+            name=name,
+            type=type,
+            visibility="",
+            static=False,
+            value="",
+        )
+
+    def parse_access(self, line:str, local_vars_by_name:Dict[str, ActionScriptVarData], function_name:str) -> None:
+        for word in line.split(" "):
+            if not "." in word:
+                continue
+
+            current_word = ""
+            accesses = []
+
+            for char in word:
+                if not char.isalpha() and char != "_" and char != ".":
+                    if accesses == []:
+                        current_word = ""
+                        continue
+
+                    accesses.append(current_word)
+                    break
+
+                if char == ".":
+                    accesses.append(current_word)
+                    current_word = ""
+                    continue
+
+                current_word += char
+
+            imported_classes = [x.import_string.split(".")[-1] for x in self.import_datas]
+            first_access = accesses[0]
+            is_first_access_in_imported_classes = first_access in imported_classes
+
+            class_name_and_package = ""
+
+            if first_access != "this" and not is_first_access_in_imported_classes:
+                if not first_access in local_vars_by_name:
+                    continue
+
+                class_name = local_vars_by_name[first_access].type
+
+                if not class_name in imported_classes:
+                    continue
+
+                class_name_and_package = self.import_datas[imported_classes.index(class_name)].import_string
+
+            if is_first_access_in_imported_classes:
+                class_name_and_package = self.import_datas[imported_classes.index(first_access)].import_string
+
+            if first_access == "this":
+                class_name_and_package = self.package_name + "." + self.class_datas[-1].name
+
+            if class_name_and_package == "" or len(accesses) < 2:
+                continue
+
+            sub_accesses = accesses[1:]
+
+            access_data = ActionScriptAccessData(
+                accessed_class_name_and_package = class_name_and_package,
+                sub_accesses = sub_accesses,
+                function_name = function_name
+            )
+
+            self.access_datas.append(access_data)
 
     def parse_function_definition(self, line_splitted_by_space:List[str], word_index:int, file:IO) -> None:
-        OPENING_BRACE = "()"[0] # the "()"[0] is for my stupid lsp which will freak out if i dont close open parenthesis in string
-        CLOSING_BRACE = "()"[1] # the "()"[1] is for my stupid lsp which will freak out if i dont close open parenthesis in string
+        local_vars_by_name = {}
+
+        def parse_line_from_function(line:str) -> None:
+            local_line_splitted_by_space = line.split(" ")
+            for index, word in enumerate(local_line_splitted_by_space):
+                if word == "var":
+                    var = self.parse_local_var_definition(local_line_splitted_by_space, index)
+
+                    if not var == None:
+                        local_vars_by_name[var.name] = var
+
+                        imported_classes = [x.import_string.split(".")[-1] for x in self.import_datas]
+
+                        if var.type in imported_classes and len(self.class_datas) > 0:
+                            import_string = self.import_datas[imported_classes.index(var.type)].import_string
+
+                            accesser = Accesser(
+                                name = name,
+                                class_name_and_package = self.package_name + "." + self.class_datas[-1].name
+                            )
+
+                            self.import_datas_by_import_string[import_string].accessers.append(accesser)
+
+                if "." in word:
+                    self.parse_access(line, local_vars_by_name, name)
 
         line = " ".join(line_splitted_by_space)
         name = line.split(OPENING_BRACE)[0].split(" ")[-1]
@@ -220,7 +416,9 @@ function_infos: {self.function_datas}
 
                 function_line_count += 1
 
-        function_info = ActionScriptFunctionData(
+                parse_line_from_function(line)
+
+        function_data = ActionScriptFunctionData(
             name=name,
             visibility=visibility,
             static=static,
@@ -231,7 +429,8 @@ function_infos: {self.function_datas}
             setter_getter=setter_getter
         )
 
-        self.function_datas.append(function_info)
+        self.function_datas.append(function_data)
+        self.function_datas_by_name[name] = function_data
 
     def parse_interface_definition(self, line_splitted_by_space:List[str], word_index:int) -> None:
         interface_data = ActionScriptInterfaceData(
@@ -267,36 +466,45 @@ function_infos: {self.function_datas}
             for line in file:
                 self.parse_line(line, file)
 
+    def sort_accesses(self, project:ProjectSources) -> None:
+        for access in self.access_datas:
+            if not access.accessed_class_name_and_package in project.actionscript_file_parsers_by_class_name_and_package:
+                continue
 
-class ProjectSources:
-    def __init__(self) -> None:
-        self.actionscript_file_parsers:List[ActionScriptFileParser] = []
-        self.new_name_by_old_name:Dict[str, str] = {}
+            accessed_AS_parser = project.actionscript_file_parsers_by_class_name_and_package[access.accessed_class_name_and_package]
+            
+            for index, access_name in enumerate(access.sub_accesses):
+                access_target = None
 
-    def is_name_already_deobfuscated(self, name:str) -> bool:
-        return name in self.new_name_by_old_name
+                if access_name in accessed_AS_parser.global_var_datas_by_name:
+                    access_target = accessed_AS_parser.global_var_datas_by_name[access_name]
 
-    def try_get_new_name(self, old_name:str) -> str:
-        """
-        Will return old_name if there is no new name.
-        """
+                if access_name in accessed_AS_parser.function_datas_by_name:
+                    access_target = accessed_AS_parser.function_datas_by_name[access_name]
 
-        if not old_name in self.new_name_by_old_name:
-            return old_name
+                accesser = Accesser(
+                    class_name_and_package = self.package_name + "." + self.class_datas[0].name,
+                    name = access.function_name
+                )
 
-        return self.new_name_by_old_name[old_name]
+                if access_target:
+                    access_target.accessers.append(accesser)
 
-    def get_new_names_with_list_of_old_names(self, list_of_old_names:List[str]) -> List[str]:
-        """
-        Will write old name to new name list, if there is no new name.
-        """
+                if isinstance(access_target, ActionScriptVarData) and index < len(access.sub_accesses) - 1:
+                    imported_classes = [x.import_string.split(".")[-1] for x in self.import_datas]
 
-        new_names = []
+                    if not access_target.type in imported_classes:
+                        continue
 
-        for old_name in list_of_old_names:
-            new_names.append(self.try_get_new_name(old_name))
+                    import_string = self.import_datas[imported_classes.index(access_target.type)].import_string
 
-        return new_names
+                    if not import_string in project.actionscript_file_parsers_by_class_name_and_package:
+                        continue
+
+                    accessed_AS_parser = project.actionscript_file_parsers_by_class_name_and_package[import_string]
+
+        self.access_datas = []
+
 
 class BasicClassAndPackageNameDeobfuscationPass:
     """
@@ -313,7 +521,7 @@ class BasicClassAndPackageNameDeobfuscationPass:
     def sort_action_script_file_parsers_by_import_count(self, project:ProjectSources) -> Dict[int, List[ActionScriptFileParser]]:
         out = {}
         for action_script_file_parser in project.actionscript_file_parsers:
-            import_count = len(action_script_file_parser.imports)
+            import_count = len(action_script_file_parser.import_datas)
 
             if not import_count in out:
                 out[import_count] = []
@@ -337,7 +545,8 @@ class BasicClassAndPackageNameDeobfuscationPass:
         return True
 
     def are_imports_matching(self, target_AS_parser:ActionScriptFileParser, reference_AS_parser:ActionScriptFileParser) -> bool:
-        for target_import_text in target_AS_parser.imports:
+        for import_data in target_AS_parser.import_datas:
+            target_import_text = import_data.import_string
             target_import_text = self.target_project.try_get_new_name(target_import_text)
 
             if Utils.is_obfuscated(target_import_text):
@@ -345,7 +554,8 @@ class BasicClassAndPackageNameDeobfuscationPass:
 
             matching_import_found = False
             
-            for reference_import_text in reference_AS_parser.imports:
+            for import_data in reference_AS_parser.import_datas:
+                reference_import_text = import_data.import_string
                 if target_import_text == reference_import_text:
                     matching_import_found = True
 
@@ -512,7 +722,7 @@ class BasicClassAndPackageNameDeobfuscationPass:
         # TODO: narrow down reference files by searching from same package, if package is known
         for target_AS_parser in self.target_project.actionscript_file_parsers:
 
-            import_count = len(target_AS_parser.imports)
+            import_count = len(target_AS_parser.import_datas)
 
             if self.is_already_deobfuscated(target_AS_parser):
                 continue
@@ -562,6 +772,19 @@ class BasicClassAndPackageNameDeobfuscationPass:
                 self.AS_parsers_are_matching(matching_AS_file_pair[0], matching_AS_file_pair[1])
 
 
+class ImportMatchingClassAndPackageNameDeobfuscationPass:
+    """
+    This pass will only try to deobfuscate class and package names.
+    It will try to match imports from target class to reference class imports.
+    """
+
+    def __init__(self) -> None:
+        return
+
+    def deobfuscate(self) -> None:
+        pass
+
+
 def parse_project_sources(source_path:str) -> ProjectSources:
     sources = ProjectSources()
 
@@ -573,6 +796,12 @@ def parse_project_sources(source_path:str) -> ProjectSources:
             file_path = os.path.join(root, filename)
             as_file_parser = ActionScriptFileParser(file_path)
             sources.actionscript_file_parsers.append(as_file_parser)
+
+            for class_data in as_file_parser.class_datas:
+                sources.actionscript_file_parsers_by_class_name_and_package[as_file_parser.package_name + "." + class_data.name] = as_file_parser
+
+    for AS_file_parser in sources.actionscript_file_parsers:
+        AS_file_parser.sort_accesses(sources)
 
     return sources
 

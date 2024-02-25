@@ -1,3 +1,5 @@
+########### OLD ############
+
 name database:
 	- Name database is object where name mappings for all the rtanks classes, interfaces, variables, functions etc are stored.
 	- Deobfuscation passes will check mapping for every name when it is read from the code.
@@ -25,3 +27,5 @@ idea of passes:
 	5. Code edit pass
 		1. All the changed names from name database are written to the code.
 		2. Saves the modified code	
+
+############################
