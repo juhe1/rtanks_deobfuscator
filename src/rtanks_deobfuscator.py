@@ -25,8 +25,9 @@ CLOSING_BRACE = "()"[1] # the "()"[1] is for my stupid lsp which will freak out 
 
 @dataclass
 class Accesser:
-    class_name_and_package:str = ""
-    name:str = ""
+    package_name:str = ""
+    file_name:str = ""
+    name:str = "" # bassically variable or function name
 
 
 class Utils:
@@ -37,6 +38,7 @@ class Utils:
     @staticmethod
     def is_obfuscated(text:str) -> bool:
         return DEFAULT_DEOBFUSCATED_NAME in text
+
 
 @dataclass
 class ActionScriptClassData:
@@ -85,8 +87,8 @@ class ActionScriptAccessData:
     In above example the accessed_class_name_and_package will have "SomeClass" as value and sub_accesses will have ["nigga", "stole", "my", "bige"] as value
     """
 
-    function_name:str
     accessed_class_name_and_package:str
+    function_name:str
     sub_accesses:List[str]
 
 
@@ -131,6 +133,7 @@ class ProjectSources:
 class ActionScriptFileParser:
     def __init__(self, file_path:str) -> None:
         self.package_name:str = ""
+        self.file_name:str = ""
         #self.imports:List[str] = []
         self.import_datas:List[ActionScriptImportDatas] = []
         self.class_datas:List[ActionScriptClassData] = []
@@ -141,22 +144,10 @@ class ActionScriptFileParser:
         self.import_datas_by_import_string:Dict[str, ActionScriptImportDatas] = {}
         self.global_var_datas_by_name:Dict[str, ActionScriptVarData] = {}
         self.function_datas_by_name:Dict[str, ActionScriptFunctionData] = {}
-        #self.import_accesser_names_by_import_name:Dict[str, List[str]] = {} # Example: {"jea.something":["some_function"]}, so jea.something is accessed in some_function
 
         self.parse_file(file_path)
 
-    def __str__(self) -> str:
-        return f"""
-package_name: {self.package_name}
-import_datas: {self.import_datas}
-class_datas: {self.class_datas}
-global_var_datas: {self.global_var_datas}
-function_datas: {self.function_datas}
-access_datas: {self.access_datas}
-        """
-
     def get_as_dictionary(self) -> Dict:
-        package_name = str(self.package_name)
         import_datas = [str(x) for x in self.import_datas]
         class_infos = [str(x) for x in self.class_datas]
         interface_infos = [str(x) for x in self.interface_datas]
@@ -165,7 +156,8 @@ access_datas: {self.access_datas}
         access_datas = [str(x) for x in self.access_datas]
 
         return {
-            "package_name":package_name,
+            "package_name":self.package_name,
+            "file_name":self.file_name,
             "import_datas":import_datas,
             "class_infos":class_infos,
             "interface_infos":interface_infos,
@@ -174,10 +166,24 @@ access_datas: {self.access_datas}
             "access_datas":access_datas,
         }
 
+    def try_add_import_accesser(self, class_name:str, name:str) -> None:
+        imported_classes = [x.import_string.split(".")[-1] for x in self.import_datas]
+
+        if class_name in imported_classes:
+            import_string = self.import_datas[imported_classes.index(class_name)].import_string
+
+            accesser = Accesser(
+                name = name,
+                package_name = self.package_name,
+                file_name = self.file_name
+            )
+
+            self.import_datas_by_import_string[import_string].accessers.append(accesser)
+
     def parse_package(self, line_splitted_by_space:List[str], word_index:int) -> None:
         if word_index + 1 < len(line_splitted_by_space):
             self.package_name = line_splitted_by_space[word_index + 1]
-    
+
     def parse_import(self, line_splitted_by_space:List[str], word_index:int) -> None:
         import_data = ActionScriptImportDatas(
             import_string = line_splitted_by_space[word_index + 1][:-1]
@@ -198,15 +204,19 @@ access_datas: {self.access_datas}
                 implements_name = line_splitted_by_space[implements_index]
 
                 if implements_name[-1] == ",":
-                    implements.append(implements_name[:-1])
+                    implement = implements_name[:-1]
+                    implements.append(implement)
+                    self.try_add_import_accesser(implement, "")
                     continue
 
                 implements.append(implements_name)
+                self.try_add_import_accesser(implements_name, "")
                 break
 
         if EXTENDS_TEXT in line_splitted_by_space:
             extends_index = line_splitted_by_space.index(EXTENDS_TEXT)
             extends = line_splitted_by_space[extends_index + 1]
+            self.try_add_import_accesser(extends, "")
 
         class_info = ActionScriptClassData(
             name=line_splitted_by_space[word_index + 1],
@@ -251,15 +261,7 @@ access_datas: {self.access_datas}
         self.global_var_datas.append(var_info)
         self.global_var_datas_by_name[name] = var_info
 
-        imported_classes = [x.import_string.split(".")[-1] for x in self.import_datas]
-        if type in imported_classes:
-            import_string = self.import_datas[imported_classes.index(type)].import_string
-            accesser = Accesser(
-                name = name,
-                class_name_and_package = self.package_name + "." + self.class_datas[0].name
-            )
-
-            self.import_datas_by_import_string[import_string].accessers.append(accesser)
+        self.try_add_import_accesser(type, name)
 
     def parse_local_var_definition(self, line_splitted_by_space:List[str], word_index:int) -> ActionScriptVarData | None:
         t = line_splitted_by_space[word_index + 1].split(":")
@@ -348,17 +350,7 @@ access_datas: {self.access_datas}
                     if not var == None:
                         local_vars_by_name[var.name] = var
 
-                        imported_classes = [x.import_string.split(".")[-1] for x in self.import_datas]
-
-                        if var.type in imported_classes and len(self.class_datas) > 0:
-                            import_string = self.import_datas[imported_classes.index(var.type)].import_string
-
-                            accesser = Accesser(
-                                name = name,
-                                class_name_and_package = self.package_name + "." + self.class_datas[-1].name
-                            )
-
-                            self.import_datas_by_import_string[import_string].accessers.append(accesser)
+                        self.try_add_import_accesser(var.name, name)
 
                 if "." in word:
                     self.parse_access(line, local_vars_by_name, name)
@@ -390,14 +382,18 @@ access_datas: {self.access_datas}
                     param_types.append("...")
                     continue
 
+                param_type = param.split(":")[1]
+
                 param_names.append(param.split(":")[0])
-                param_types.append(param.split(":")[1])
+                param_types.append(param_type)
+                self.try_add_import_accesser(param_type, name)
 
         return_type = ""
 
         # parse return type if the function has one
         if line_splitted_by_space[-2] == ":":
             return_type = line_splitted_by_space[-1]
+            self.try_add_import_accesser(return_type, name)
 
         OPENING_CURLY_BRACE = "{}"[0] # the "{}"[0] is for my stupid lsp which will freak out if i dont close open parenthesis in string
         CLOSING_CURLY_BRACE = "{}"[1] # the "{}"[1] is for my stupid lsp which will freak out if i dont close open parenthesis in string
@@ -462,6 +458,8 @@ access_datas: {self.access_datas}
                     pass
 
     def parse_file(self, file_path:str) -> None:
+        self.file_name = os.path.basename(file_path)
+
         with open(file_path, "r", encoding="utf-8") as file:
             for line in file:
                 self.parse_line(line, file)
@@ -483,7 +481,8 @@ access_datas: {self.access_datas}
                     access_target = accessed_AS_parser.function_datas_by_name[access_name]
 
                 accesser = Accesser(
-                    class_name_and_package = self.package_name + "." + self.class_datas[0].name,
+                    file_name = self.file_name,
+                    package_name = self.package_name,
                     name = access.function_name
                 )
 
@@ -504,6 +503,26 @@ access_datas: {self.access_datas}
                     accessed_AS_parser = project.actionscript_file_parsers_by_class_name_and_package[import_string]
 
         self.access_datas = []
+
+
+class DeobfuscationUtils:
+    @staticmethod
+    def is_AS_parser_class_name_and_package_name_obfuscated(target_AS_parser:ActionScriptFileParser, project:ProjectSources) -> bool:
+        if Utils.is_obfuscated(target_AS_parser.package_name):
+            return True
+
+        if not project.is_name_already_deobfuscated(target_AS_parser.package_name):
+            return True
+
+        target_class_name = target_AS_parser.class_datas[0].name
+
+        if Utils.is_obfuscated(target_class_name):
+            return True
+
+        if not project.is_name_already_deobfuscated(target_class_name):
+            return True
+
+        return False
 
 
 class BasicClassAndPackageNameDeobfuscationPass:
@@ -712,11 +731,8 @@ class BasicClassAndPackageNameDeobfuscationPass:
         for index, target_interface_data in enumerate(target_AS_parser.interface_datas):
             self.target_project.new_name_by_old_name[target_interface_data.name] = reference_AS_parser.interface_datas[index].name
 
-        target_package_name_splitted = target_AS_parser.package_name.split(".")
-        reference_package_name_splitted = target_AS_parser.package_name.split(".")
-
-        for index, target_package_name_part in enumerate(target_package_name_splitted):
-            self.target_project.new_name_by_old_name[target_package_name_part] = reference_AS_parser.package_name
+        self.target_project.new_name_by_old_name[target_AS_parser.package_name] = reference_AS_parser.package_name
+        self.target_project.new_name_by_old_name[target_AS_parser.file_name] = reference_AS_parser.file_name
 
     def deobfuscate(self) -> None:
         # TODO: narrow down reference files by searching from same package, if package is known
@@ -772,6 +788,180 @@ class BasicClassAndPackageNameDeobfuscationPass:
                 self.AS_parsers_are_matching(matching_AS_file_pair[0], matching_AS_file_pair[1])
 
 
+@dataclass
+class Match:
+    target_name:str
+    matching_reference_names:List[str] = field(default_factory=list)
+
+
+class FunctionNameDeobfuscationPass:
+
+    def __init__(self, reference_project:ProjectSources, target_project:ProjectSources, line_count_deobfudcation_enabled:bool) -> None:
+        self.reference_project = reference_project
+        self.target_project = target_project
+        self.line_count_deobfudcation_enabled:bool = line_count_deobfudcation_enabled
+
+    def do_signuture_matching(self, target_AS_parser:ActionScriptFileParser, reference_AS_parser:ActionScriptFileParser) -> List[Match]:
+
+        def are_params_matching(target_param_names:List[str], target_param_types:List[str], reference_param_names:List[str], reference_param_types:List[str]) -> bool:
+            for index, target_param_name in enumerate(target_param_names):
+                target_param_name = self.target_project.try_get_new_name(target_param_name)
+
+                if not Utils.is_obfuscated(target_param_name):
+                    if not target_param_name == reference_param_names[index]:
+                        return False
+
+                target_param_type = self.target_project.try_get_new_name(target_param_types[index])
+
+                if not Utils.is_obfuscated(target_param_type):
+                    if not target_param_type == reference_param_types[index]:
+                        return False
+
+            return True
+
+        matches = []
+
+        for target_function_data in target_AS_parser.function_datas:
+            match = Match(
+                target_name = target_function_data.name
+            )
+
+            for reference_function_data in reference_AS_parser.function_datas:
+                target_return_type = self.target_project.try_get_new_name(target_function_data.return_type)
+
+                if not Utils.is_obfuscated(target_return_type):
+                    if not target_return_type == reference_function_data.return_type:
+                        continue
+
+                target_name = self.target_project.try_get_new_name(target_function_data.name)
+
+                if not Utils.is_obfuscated(target_name):
+                    if not target_name == reference_function_data.name:
+                        continue
+
+                if not target_function_data.visibility == reference_function_data.visibility:
+                    continue
+
+                if not target_function_data.static == reference_function_data.static:
+                    continue
+
+                if not are_params_matching(target_function_data.param_names, target_function_data.param_types, reference_function_data.param_names, reference_function_data.param_types):
+                    continue
+
+                if self.line_count_deobfudcation_enabled and not target_function_data.line_count == reference_function_data.line_count:
+                    continue
+                
+                match.matching_reference_names.append(reference_function_data.name)
+
+            matches.append(match)
+
+        return matches
+
+    def do_local_reference_matching(self, target_AS_parser:ActionScriptFileParser, reference_AS_parser:ActionScriptFileParser) -> List[Match]:
+        matches = []
+
+        for target_function_data in target_AS_parser.function_datas:
+            match = Match(
+                target_name = target_function_data.name
+            )
+
+            for reference_function_data in reference_AS_parser.function_datas:
+                target_function_accessers = target_function_data.accessers
+
+                for target_function_accesser in target_function_accessers:
+                    #if not self.target_project.is_name_already_deobfuscated(target_function_accesser)
+                    pass
+
+    def deobfuscate(self) -> None:
+        for target_AS_parser in self.target_project.actionscript_file_parsers:
+            if DeobfuscationUtils.is_AS_parser_class_name_and_package_name_obfuscated(target_AS_parser, self.target_project):
+                continue
+
+            target_as_class_name_and_package = target_AS_parser.package_name + "." + target_AS_parser.class_datas[0].name
+
+            if not target_as_class_name_and_package in self.reference_project.actionscript_file_parsers_by_class_name_and_package:
+                continue
+
+            reference_AS_parser = self.reference_project.actionscript_file_parsers_by_class_name_and_package[target_as_class_name_and_package]
+
+            match_list = self.do_signuture_matching(target_AS_parser, reference_AS_parser)
+
+            for match in match_list:
+                if len(match.matching_reference_names) < 2:
+                    continue
+
+                match_list = self.do_local_reference_matching(target_AS_parser, reference_AS_parser)
+
+
+class VariableNameDeobfuscationPass:
+
+    """
+    This pass will first try to match using only the variable type and value.
+    If there is more that one match, then it will use also local access data in the deobfuscation.
+    Finaly it will try to use global access data if it still doesn't succeed.
+    """
+
+    def __init__(self, reference_project:ProjectSources, target_project:ProjectSources) -> None:
+        self.reference_project = reference_project
+        self.target_project = target_project
+
+    def do_signuture_matching(self, target_AS_parser:ActionScriptFileParser, reference_AS_parser:ActionScriptFileParser) -> List[Match]:
+        matches = []
+
+        for target_global_var_data in target_AS_parser.global_var_datas:
+            match = Match(
+                target_name = target_global_var_data.name
+            )
+
+            for reference_global_var_data in reference_AS_parser.global_var_datas:
+                target_type = self.target_project.try_get_new_name(target_global_var_data.type)
+
+                if not Utils.is_obfuscated(target_type):
+                    if not target_type == reference_global_var_data.type:
+                        continue
+
+                target_name = self.target_project.try_get_new_name(target_global_var_data.name)
+
+                if not Utils.is_obfuscated(target_name):
+                    if not target_name == reference_global_var_data.name:
+                        continue
+
+                if not target_global_var_data.visibility == reference_global_var_data.visibility:
+                    continue
+
+                if not target_global_var_data.static == reference_global_var_data.static:
+                    continue
+
+                match.matching_reference_names.append(reference_global_var_data.name)
+
+            matches.append(match)
+
+        return matches
+
+    def do_local_reference_matching(self, target_AS_parser:ActionScriptFileParser, reference_AS_parser:ActionScriptFileParser) -> List[Match]:
+        pass
+
+    def deobfuscate(self) -> None:
+
+        for target_AS_parser in self.target_project.actionscript_file_parsers:
+            if DeobfuscationUtils.is_AS_parser_class_name_and_package_name_obfuscated(target_AS_parser, self.target_project):
+                continue
+
+            target_as_class_name_and_package = target_AS_parser.package_name + "." + target_AS_parser.class_datas[0].name
+
+            if not target_as_class_name_and_package in self.reference_project.actionscript_file_parsers_by_class_name_and_package:
+                continue
+
+            reference_AS_parser = self.reference_project.actionscript_file_parsers_by_class_name_and_package[target_as_class_name_and_package]
+
+            match_list = self.do_signuture_matching(target_AS_parser, reference_AS_parser)
+
+            for match in match_list:
+                if len(match.matching_reference_names) < 2:
+                    continue
+
+                match_list = self.do_local_reference_matching(target_AS_parser, reference_AS_parser)
+
 class ImportMatchingClassAndPackageNameDeobfuscationPass:
     """
     This pass will only try to deobfuscate class and package names.
@@ -825,5 +1015,5 @@ def main() -> None:
     print("copied new_name_by_old_name to clipboard!")
 
 if __name__ == "__main__":
-    #test_action_script_file_parser()
-    main()
+    test_action_script_file_parser()
+    #main()
