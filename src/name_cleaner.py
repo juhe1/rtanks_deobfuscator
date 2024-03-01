@@ -13,7 +13,8 @@ OUTPUT_SOURCE_PATH:str = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\da
 
 OBFUSCATION_IDENTIFIER_CHAR:str = "§"
 ALLOWED_FILE_TYPES:List[str] = ["as"]
-NEW_NAME = "deobfuscated_name"
+NEW_NAME = "obfuscated_name"
+ENABLE_OBFUSCATED_NAME_MARKER:bool = True # will add "Å" to beginning and to end of every obfuscated name
 
 new_name_by_old_name:Dict[str, str] = {} 
 current_name_id = 0
@@ -24,7 +25,11 @@ def deobfuscate_name(obfuscated_name:str) -> str:
     if obfuscated_name in new_name_by_old_name:
         return new_name_by_old_name[obfuscated_name]
     else:
-        new_name = NEW_NAME + "_" + str(current_name_id)
+        if ENABLE_OBFUSCATED_NAME_MARKER:
+            new_name = "Å" + NEW_NAME + "_" + str(current_name_id) + "Å"
+        else:
+            new_name = NEW_NAME + "_" + str(current_name_id)
+
         current_name_id += 1
         new_name_by_old_name[obfuscated_name] = new_name
         return new_name

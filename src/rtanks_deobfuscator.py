@@ -9,7 +9,7 @@ from typing_extensions import Tuple
 import pyperclip # NOTE: Only used in debugging. So remove if you want.
 
 ALLOWED_FILE_TYPES:List[str] = ["as"]
-DEFAULT_DEOBFUSCATED_NAME = "deobfuscated_name"
+DEFAULT_DEOBFUSCATED_NAME = "Åobfuscated_nameÅ"
 TEST_SOURCE_PATH = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\data\test_data"
 
 # Names are taken from the reference project. So when we are deobfuscating rtanks, this path should countain mytanks sources.
@@ -17,6 +17,8 @@ REFERENCE_PROJECT_PATH = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\da
 
 # Target project should contain sources that we are trying to deobfuscate. 
 TARGET_PROJECT_PATH = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\data\rtanks_sources_cleaned"
+
+DEOBFUSCATED_CODE_SAVE_PATH = r"D:\juho1\tankkin_modaus\rtanks\python\deobfuscator\data\rtanks_sources_deobfuscated"
 
 FUNCTION_LINE_COUNT_TOLERANCE = 2
 OPENING_BRACE = "()"[0] # the "()"[0] is for my stupid lsp which will freak out if i dont close open parenthesis in string
@@ -507,19 +509,11 @@ class ActionScriptFileParser:
 
 class DeobfuscationUtils:
     @staticmethod
-    def is_AS_parser_class_name_and_package_name_obfuscated(target_AS_parser:ActionScriptFileParser, project:ProjectSources) -> bool:
-        if Utils.is_obfuscated(target_AS_parser.package_name):
+    def is_AS_parser_file_name_and_package_name_obfuscated(target_AS_parser:ActionScriptFileParser, project:ProjectSources) -> bool:
+        if Utils.is_obfuscated(target_AS_parser.package_name) and not project.is_name_already_deobfuscated(target_AS_parser.package_name):
             return True
 
-        if not project.is_name_already_deobfuscated(target_AS_parser.package_name):
-            return True
-
-        target_class_name = target_AS_parser.class_datas[0].name
-
-        if Utils.is_obfuscated(target_class_name):
-            return True
-
-        if not project.is_name_already_deobfuscated(target_class_name):
+        if Utils.is_obfuscated(target_AS_parser.file_name) and not project.is_name_already_deobfuscated(target_AS_parser.file_name):
             return True
 
         return False
@@ -748,7 +742,7 @@ class BasicClassAndPackageNameDeobfuscationPass:
 
             reference_AS_parsers_with_same_import_counts = self.reference_project_action_script_files_by_import_count[import_count]
 
-            matching_AS_file_pair = None
+            matching_AS_file_pair:Tuple|None = None
             matching_AS_file_pair_count = 0
 
             for reference_AS_parser in reference_AS_parsers_with_same_import_counts:
@@ -784,7 +778,7 @@ class BasicClassAndPackageNameDeobfuscationPass:
 
                 matching_AS_file_pair = (target_AS_parser, reference_AS_parser)
 
-            if matching_AS_file_pair_count == 1:
+            if matching_AS_file_pair_count == 1 and matching_AS_file_pair  != None:
                 self.AS_parsers_are_matching(matching_AS_file_pair[0], matching_AS_file_pair[1])
 
 
@@ -804,6 +798,9 @@ class FunctionNameDeobfuscationPass:
     def do_signuture_matching(self, target_AS_parser:ActionScriptFileParser, reference_AS_parser:ActionScriptFileParser) -> List[Match]:
 
         def are_params_matching(target_param_names:List[str], target_param_types:List[str], reference_param_names:List[str], reference_param_types:List[str]) -> bool:
+            if len(target_param_names) != len(reference_param_names):
+                return False
+
             for index, target_param_name in enumerate(target_param_names):
                 target_param_name = self.target_project.try_get_new_name(target_param_name)
 
@@ -857,27 +854,17 @@ class FunctionNameDeobfuscationPass:
 
         return matches
 
-    def do_local_reference_matching(self, target_AS_parser:ActionScriptFileParser, reference_AS_parser:ActionScriptFileParser) -> List[Match]:
-        matches = []
-
-        for target_function_data in target_AS_parser.function_datas:
-            match = Match(
-                target_name = target_function_data.name
-            )
-
-            for reference_function_data in reference_AS_parser.function_datas:
-                target_function_accessers = target_function_data.accessers
-
-                for target_function_accesser in target_function_accessers:
-                    #if not self.target_project.is_name_already_deobfuscated(target_function_accesser)
-                    pass
-
     def deobfuscate(self) -> None:
         for target_AS_parser in self.target_project.actionscript_file_parsers:
-            if DeobfuscationUtils.is_AS_parser_class_name_and_package_name_obfuscated(target_AS_parser, self.target_project):
+            if DeobfuscationUtils.is_AS_parser_file_name_and_package_name_obfuscated(target_AS_parser, self.target_project):
                 continue
 
-            target_as_class_name_and_package = target_AS_parser.package_name + "." + target_AS_parser.class_datas[0].name
+            if len(target_AS_parser.class_datas) == 0:
+                continue
+
+            target_package_name = self.target_project.try_get_new_name(self.target_project.try_get_new_name(target_AS_parser.package_name))
+            target_class_name = self.target_project.try_get_new_name(target_AS_parser.class_datas[0].name)
+            target_as_class_name_and_package = target_package_name + "." + target_class_name
 
             if not target_as_class_name_and_package in self.reference_project.actionscript_file_parsers_by_class_name_and_package:
                 continue
@@ -887,10 +874,14 @@ class FunctionNameDeobfuscationPass:
             match_list = self.do_signuture_matching(target_AS_parser, reference_AS_parser)
 
             for match in match_list:
-                if len(match.matching_reference_names) < 2:
+                match_count = len(match.matching_reference_names)
+                if match_count > 1:
                     continue
 
-                match_list = self.do_local_reference_matching(target_AS_parser, reference_AS_parser)
+                if match_count == 0:
+                    continue
+
+                self.target_project.new_name_by_old_name[match.target_name] = match.matching_reference_names[0]
 
 
 class VariableNameDeobfuscationPass:
@@ -938,16 +929,77 @@ class VariableNameDeobfuscationPass:
 
         return matches
 
-    def do_local_reference_matching(self, target_AS_parser:ActionScriptFileParser, reference_AS_parser:ActionScriptFileParser) -> List[Match]:
-        pass
+    def do_accesser_matching(self, target_AS_parser:ActionScriptFileParser, reference_AS_parser:ActionScriptFileParser, local_matching:bool) -> List[Match]:
+
+        def are_vars_matching(target_var_data:ActionScriptVarData, reference_var_data:ActionScriptVarData) -> bool:
+            for target_var_accesser in target_var_data.accessers:
+                if local_matching:
+                    if target_var_accesser.package_name != target_AS_parser.package_name:
+                        continue
+
+                    if target_var_accesser.file_name != target_AS_parser.file_name:
+                        continue
+
+                target_var_accesser_package_name = self.target_project.try_get_new_name(target_var_accesser.package_name)
+
+                if Utils.is_obfuscated(target_var_accesser_package_name):
+                    continue
+
+                target_var_accesser_file_name = self.target_project.try_get_new_name(target_var_accesser.file_name)
+
+                if Utils.is_obfuscated(target_var_accesser_file_name):
+                    continue
+
+                target_var_accesser_name = self.target_project.try_get_new_name(target_var_accesser.name)
+
+                if Utils.is_obfuscated(target_var_accesser_name):
+                    continue
+
+                matching_reference_accesser_found = False
+
+                for reference_var_accesser in reference_var_data.accessers:
+                    if target_var_accesser_package_name != reference_var_accesser.package_name:
+                        continue
+
+                    if target_var_accesser_file_name != reference_var_accesser.file_name:
+                        continue
+
+                    if target_var_accesser_name != reference_var_accesser.name:
+                        continue
+
+                    matching_reference_accesser_found = True
+
+                if not matching_reference_accesser_found:
+                    return False
+
+            return True
+
+        matches = []
+
+        for target_var_data in target_AS_parser.global_var_datas:
+            match = Match(
+                target_name = target_var_data.name
+            )
+
+            for reference_var_data in reference_AS_parser.global_var_datas:
+                if are_vars_matching(target_var_data, reference_var_data):
+                    match.matching_reference_names.append(reference_var_data.name)
+
+        return matches
+                                                
 
     def deobfuscate(self) -> None:
 
         for target_AS_parser in self.target_project.actionscript_file_parsers:
-            if DeobfuscationUtils.is_AS_parser_class_name_and_package_name_obfuscated(target_AS_parser, self.target_project):
+            if DeobfuscationUtils.is_AS_parser_file_name_and_package_name_obfuscated(target_AS_parser, self.target_project):
                 continue
 
-            target_as_class_name_and_package = target_AS_parser.package_name + "." + target_AS_parser.class_datas[0].name
+            if len(target_AS_parser.class_datas) == 0:
+                continue
+
+            target_package_name = self.target_project.try_get_new_name(self.target_project.try_get_new_name(target_AS_parser.package_name))
+            target_class_name = self.target_project.try_get_new_name(target_AS_parser.class_datas[0].name)
+            target_as_class_name_and_package = target_package_name + "." + target_class_name
 
             if not target_as_class_name_and_package in self.reference_project.actionscript_file_parsers_by_class_name_and_package:
                 continue
@@ -957,10 +1009,19 @@ class VariableNameDeobfuscationPass:
             match_list = self.do_signuture_matching(target_AS_parser, reference_AS_parser)
 
             for match in match_list:
-                if len(match.matching_reference_names) < 2:
+                matching_reference_count = len(match.matching_reference_names)
+                if matching_reference_count < 2:
+                    if matching_reference_count > 0:
+                        self.target_project.new_name_by_old_name[match.target_name] = match.matching_reference_names[0]
                     continue
 
-                match_list = self.do_local_reference_matching(target_AS_parser, reference_AS_parser)
+                match_list = self.do_accesser_matching(target_AS_parser, reference_AS_parser, True)
+
+                for match in match_list:
+                    matching_reference_count = len(match.matching_reference_names)
+                    if matching_reference_count < 2 and matching_reference_count > 0:
+                        self.target_project.new_name_by_old_name[match.target_name] = match.matching_reference_names[0]
+                        continue
 
 class ImportMatchingClassAndPackageNameDeobfuscationPass:
     """
@@ -968,11 +1029,108 @@ class ImportMatchingClassAndPackageNameDeobfuscationPass:
     It will try to match imports from target class to reference class imports.
     """
 
-    def __init__(self) -> None:
-        return
+    def __init__(self, reference_project:ProjectSources, target_project:ProjectSources) -> None:
+        self.reference_project = reference_project
+        self.target_project = target_project
+
+    def do_accesser_matching(self, target_AS_parser:ActionScriptFileParser, reference_AS_parser:ActionScriptFileParser) -> List[Match]:
+
+        def are_accesses_matching(target_accessers:List[Accesser], reference_accessers:List[Accesser]) -> bool:
+            for target_accesser in target_accessers:
+                target_var_accesser_package_name = self.target_project.try_get_new_name(target_accesser.package_name)
+
+                if Utils.is_obfuscated(target_var_accesser_package_name):
+                    continue
+
+                target_accesser_file_name = self.target_project.try_get_new_name(target_accesser.file_name)
+
+                if Utils.is_obfuscated(target_accesser_file_name):
+                    continue
+
+                target_accesser_name = self.target_project.try_get_new_name(target_accesser.name)
+
+                if Utils.is_obfuscated(target_accesser_name):
+                    continue
+
+                matching_reference_accesser_found = False
+
+                for reference_accesser in reference_accessers:
+                    if target_var_accesser_package_name != reference_accesser.package_name:
+                        continue
+
+                    if target_accesser_file_name != reference_accesser.file_name:
+                        continue
+
+                    if target_accesser_name != reference_accesser.name:
+                        continue
+
+                    matching_reference_accesser_found = True
+
+                if not matching_reference_accesser_found:
+                    return False
+
+            return True
+
+        matches = []
+
+        for target_import_data in target_AS_parser.import_datas:
+            match = Match(
+                target_name = target_import_data.import_string
+            )
+
+            for reference_import_data in reference_AS_parser.import_datas:
+                if are_accesses_matching(target_import_data.accessers, reference_import_data.accessers):
+                    match.matching_reference_names.append(reference_import_data.import_string)
+
+            matches.append(match)
+
+        return matches
 
     def deobfuscate(self) -> None:
-        pass
+
+        for target_AS_parser in self.target_project.actionscript_file_parsers:
+            if DeobfuscationUtils.is_AS_parser_file_name_and_package_name_obfuscated(target_AS_parser, self.target_project):
+                continue
+
+            if len(target_AS_parser.class_datas) == 0:
+                continue
+
+            target_package_name = self.target_project.try_get_new_name(self.target_project.try_get_new_name(target_AS_parser.package_name))
+            target_class_name = self.target_project.try_get_new_name(target_AS_parser.class_datas[0].name)
+            target_as_class_name_and_package = target_package_name + "." + target_class_name
+
+            if not target_as_class_name_and_package in self.reference_project.actionscript_file_parsers_by_class_name_and_package:
+                continue
+
+            reference_AS_parser = self.reference_project.actionscript_file_parsers_by_class_name_and_package[target_as_class_name_and_package]
+
+            match_list = self.do_accesser_matching(target_AS_parser, reference_AS_parser)
+
+            for match in match_list:
+                if not len(match.matching_reference_names) < 2:
+                    continue
+
+                if len(match.matching_reference_names) == 0:
+                    continue
+
+                if not match.target_name in self.target_project.actionscript_file_parsers_by_class_name_and_package:
+                    continue
+
+                if not match.matching_reference_names[0] in self.reference_project.actionscript_file_parsers_by_class_name_and_package:
+                    continue
+
+                target_AS_parser = self.target_project.actionscript_file_parsers_by_class_name_and_package[match.target_name]
+                reference_AS_parser = self.reference_project.actionscript_file_parsers_by_class_name_and_package[match.matching_reference_names[0]]
+
+                self.target_project.new_name_by_old_name[target_AS_parser.package_name] = reference_AS_parser.package_name
+                self.target_project.new_name_by_old_name[target_AS_parser.file_name] = reference_AS_parser.file_name
+
+                if len(target_AS_parser.class_datas) != len(reference_AS_parser.class_datas):
+                    continue
+
+                for index, target_class_data in enumerate(target_AS_parser.class_datas):
+                    reference_class_data = reference_AS_parser.class_datas[index]
+                    self.target_project.new_name_by_old_name[target_class_data.name] = reference_class_data.name
 
 
 def parse_project_sources(source_path:str) -> ProjectSources:
@@ -995,6 +1153,70 @@ def parse_project_sources(source_path:str) -> ProjectSources:
 
     return sources
 
+def apply_deobfuscations_to_files(source_path:str, new_sources:str, new_name_by_old_name:Dict[str, str]) -> None:
+    def loop_file_content(file_path:str) -> str:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            new_text = ""
+
+            for line in file:
+                new_line = line
+                inside_obfuscated_name = False
+                obfuscated_name = ""
+
+                for char in line:
+                    if char == "Å":
+                        inside_obfuscated_name = not inside_obfuscated_name
+
+                        if not inside_obfuscated_name:
+                            obfuscated_name += "Å"
+
+                            if obfuscated_name in new_name_by_old_name:
+                                new_line = new_line.replace(obfuscated_name, new_name_by_old_name[obfuscated_name])
+                            else:
+                                new_line = new_line.replace(obfuscated_name, obfuscated_name[1:-1])
+
+                            obfuscated_name = ""
+
+                    if inside_obfuscated_name:
+                        obfuscated_name += char
+
+                new_text += new_line
+
+        return new_text
+
+    for root, dirs, files in os.walk(source_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+
+            if not file.split(".")[-1] in ALLOWED_FILE_TYPES:
+                continue
+
+            new_content = loop_file_content(file_path)
+
+            file_name = os.path.basename(file_path)
+
+            package_name = file_path.replace(source_path, "").replace(file_name, "").replace("\\", ".")
+            if len(package_name) < 2:
+                package_name = ""
+            else:
+                if package_name[0] == ".":
+                    package_name = package_name[1:]
+                if package_name[-1] == ".":
+                    package_name = package_name[:-1]
+
+                if package_name in new_name_by_old_name:
+                    package_name = new_name_by_old_name[package_name]
+
+            if file_name in new_name_by_old_name:
+                file_name = new_name_by_old_name[file_name]
+
+            new_path = new_sources + "\\" + package_name.replace(".", "\\")
+
+            os.makedirs(new_path, exist_ok=True)
+
+            with open(new_path + "\\" + file_name, 'w', encoding="utf-8") as file:
+                file.write(new_content)
+
 def test_action_script_file_parser() -> None:
     # Copy the string to the clipboard
     sources = parse_project_sources(TEST_SOURCE_PATH)
@@ -1008,12 +1230,26 @@ def main() -> None:
     target_project = parse_project_sources(TARGET_PROJECT_PATH)
 
     basic_class_and_package_name_deobfuscation_pass = BasicClassAndPackageNameDeobfuscationPass(reference_project, target_project)
+    function_name_deobfuscation_pass = FunctionNameDeobfuscationPass(reference_project, target_project, line_count_deobfudcation_enabled=True)
+    variable_name_deobfuscation_pass = VariableNameDeobfuscationPass(reference_project, target_project)
+    import_deobfuscation_pass = ImportMatchingClassAndPackageNameDeobfuscationPass(reference_project, target_project)
+
     basic_class_and_package_name_deobfuscation_pass.deobfuscate()
+    function_name_deobfuscation_pass.deobfuscate()
+    variable_name_deobfuscation_pass.deobfuscate()
+    import_deobfuscation_pass.deobfuscate()
     basic_class_and_package_name_deobfuscation_pass.deobfuscate()
+    function_name_deobfuscation_pass.deobfuscate()
+    variable_name_deobfuscation_pass.deobfuscate()
+    import_deobfuscation_pass.deobfuscate()
+
+    apply_deobfuscations_to_files(TARGET_PROJECT_PATH, DEOBFUSCATED_CODE_SAVE_PATH, target_project.new_name_by_old_name)
     
-    pyperclip.copy(json.dumps(target_project.new_name_by_old_name))
-    print("copied new_name_by_old_name to clipboard!")
+    #pyperclip.copy(json.dumps(target_project.new_name_by_old_name))
+    #print("copied new_name_by_old_name to clipboard!")
+
+    print("DONE!")
 
 if __name__ == "__main__":
-    test_action_script_file_parser()
-    #main()
+    #test_action_script_file_parser()
+    main()
